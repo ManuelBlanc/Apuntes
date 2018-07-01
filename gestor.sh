@@ -1,19 +1,81 @@
 #!/usr/bin/env bash
 
+# =============================================================================
+# This file is part of https://github.com/apuntes-uam-infomat/Apuntes
+# Copyright (c) 2018 Manuel Blanc, Pablo Manso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+# =============================================================================
+
+
+## Si se sourcea este script, se instala como un alias con auto-completar
+## Solo son distintos si se ejecuta `source gestor.sh`
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+	_gestor_cmd="$(basename ${BASH_SOURCE[0]%.sh})"
+	alias "$_gestor_cmd"="$PWD/${BASH_SOURCE[0]}"
+
+	## Funcion para generar el auto-completar
+	_gestor() {
+		local opts cur=$2 len="${#COMP_WORDS[@]}"
+		COMPREPLY=()
+
+		## No autocompletamos mas que 2 argumentos
+		if [[ $len -gt 4 ]]; then return 0; fi
+
+		## Autocompletado de nombres de comandos
+		if [[ $len -lt 3 || ( $len -eq 3 && "${COMP_WORDS[1]}" == "ayuda" ) ]]; then
+			local _gestor_path="$(alias "$_gestor_cmd" | cut -f2 -d\')"
+			opts=$(perl -lane '
+				next unless(/^#=/);
+				$F[1] =~ s/_/-/g;
+				printf "$F[1]\n";
+				while (<> =~ /^#=/) {};
+			' "$_gestor_path")
+			COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+			return 0
+		fi
+
+		## Autocompletado de los nombres de asignaturas para algunos comandos
+		if [[ $len -eq 3 ]]; then
+			case "${COMP_WORDS[1]}" in
+				compilar|empaquetar|limpiar)
+					local IFS=$'\n'
+					COMPREPLY=( $(compgen -d -X 'Cosas guays LaTeX' -X '.git' -- "$cur") )
+					return 0
+					;;
+				*)
+					return 0
+					;;
+			esac
+		fi
+	}
+	complete -o filenames -o bashdefault -F _gestor gestor
+
+	echo "alias $_gestor_cmd='$PWD/${BASH_SOURCE[0]}'"
+	return 0
+fi
+
 # ===================================================================
 # Utilidades
 
-# Modo seguro
-set -eu
-set -o pipefail
-# Mejor globbing
+# Modo seguro y mejor globbing
+set -eu -o pipefail
 shopt -s extglob nullglob
 
 # Navegamos al directorio donde este este script
 cd "$( dirname "${BASH_SOURCE[0]}" )"
-ROOT_DIR="$(pwd)"
 
-PACKAGE_DIR="$ROOT_DIR/Cosas Guays LaTeX"
+PACKAGE_DIR="$(pwd)/Cosas Guays LaTeX"
 SILENT=false
 
 # Formateo
@@ -56,12 +118,9 @@ seleccionar_asignatura() {
 # ===================================================================
 # Sub comandos
 
-## crear_asignatura
-##
-## Crea la estructura de ficheros para una asignatura nueva.
-## Uso: crear_asignatura asignatura [abreviacion]
-##
-crear_asignatura() {
+#= crear_asignatura @nombre [@abreviacion]
+#= Crea la estructura de ficheros para una asignatura nueva.
+cmdlet__crear_asignatura() {
 
 	# Procesamos los argumentos
 	# Si no hay abreviatura, usamos el nombre SIN los espacios
@@ -80,9 +139,9 @@ crear_asignatura() {
 	local extra_tex_files_input="" subdir suffix
 
 	# Creamos algunos directorios extra
-	for subdir in img pdf tex tikzgen; do
+	for subdir in img pdf tex pdf/tikzgen; do
 		INFO "Creado directorio $name/$subdir (con fichero .keep)"
-		mkdir "$subdir"
+		mkdir -p "$subdir"
 		touch "$subdir/.keep"
 	done
 
@@ -136,13 +195,9 @@ crear_asignatura() {
 	INFO "Terminado con exito!"
 }
 
-##
-## compilar
-##
-## Compila los apuntes de la asignatura especificada.
-## Uso: compilar [asignatura]
-##
-compilar() {
+#= compilar @asignatura
+#= Compila los apuntes de la asignatura especificada.
+cmdlet__compilar() {
 
 	# Esta separado para no ignorar el codigo de retorno
 	local asignatura;
@@ -152,7 +207,7 @@ compilar() {
 
 	# Preparamos para compilar...
 	cd "$asignatura"
-	mkdir -p tikzgen
+	mkdir -p pdf/tikzgen
 
 	# Compilamos comprobando el codigo de retorno
 	if ! latexmk -r "../latexmkrc.pl" > /dev/null; then
@@ -169,12 +224,9 @@ compilar() {
 	return 0
 }
 
-##
-## compilar_todo
-##
-## Compila todos los apuntes.
-##
-compilar_todo() {
+#= compilar_todo
+#= Compila todos los apuntes.
+cmdlet__compilar_todo() {
 
 	local dir_num=0
 	local dir_upd=0
@@ -182,7 +234,7 @@ compilar_todo() {
 
 	while IFS= read -r -d $'\0' asignatura; do
 
-		if ( compilar "$(dirname "$asignatura")" ); then
+		if ( cmdlet__compilar "$(dirname "$asignatura")" ); then
 			(( dir_upd += 1 ))
 		else
 			(( dir_err += 1 ))
@@ -202,13 +254,9 @@ compilar_todo() {
 
 }
 
-##
-## limpiar
-##
-## Limpia los apuntes de la asignatura especificada.
-## Uso: limpiar [asignatura]
-##
-limpiar() {
+#= limpiar @asignatura
+#= Limpia los apuntes de la asignatura especificada.
+cmdlet__limpiar() {
 
 	# Esta separado para no ignorar el codigo de retorno
 	local asignatura;
@@ -221,12 +269,9 @@ limpiar() {
 	cd ..
 }
 
-##
-## limpiar_todo
-##
-## Limpia los archivos no necesarios de todos los directorios.
-##
-limpiar_todo() {
+#= limpiar_todo
+#= Limpia los archivos no necesarios de todos los directorios.
+cmdlet__limpiar_todo() {
 
 	local dir_num=0
 
@@ -245,13 +290,9 @@ limpiar_todo() {
 
 }
 
-##
-## empaquetar
-##
-## Empaqueta los ficheros de una asignatura en un zip.
-## Uso: compilar [asignatura]
-##
-empaquetar() {
+#= empaquetar @asignatura
+#= Empaqueta los ficheros de una asignatura en un zip.
+cmdlet__empaquetar() {
 
 	# Esta separado para no ignorar el codigo de retorno
 	local asignatura;
@@ -280,12 +321,9 @@ empaquetar() {
 	return 0
 }
 
-##
-## instalar
-##
-## Instala localmente los paquetes de los apuntes.
-##
-instalar() {
+#= instalar
+#= Instala localmente los paquetes de los apuntes.
+cmdlet__instalar() {
 	WARN "Esta funcionalidad no esta implementada aqui."
 	WARN "Si realmente quieres instalar los paquetes globalmente,"
 	WARN "ejecuta el script situado en ${F_UNDER}Cosas guays LaTeX/install${F_RESET}"
@@ -293,76 +331,62 @@ instalar() {
 }
 
 
-##
-## ayuda
-##
-## Muestra una ayuda para los subcomandos.
-##
-ayuda() {
-	echo "uso: ./util.sh [subcomando] [argumentos]..."
-	echo "Subcomandos validos:"
-	echo
-	echo "${F_BOLD}crear_asignatura${F_RESET} [nombre completo] [abreviatura]"
-	echo "   Crea la estructura de ficheros para una asignatura nueva"
-	echo "   Si no se proporciona una abrev, se usara el nombre sin espacios"
-	echo
-	echo "${F_BOLD}compilar${F_RESET} [asignatura]"
-	echo "    Compila una asignatura"
-	echo
-	echo "${F_BOLD}compilar_todo${F_RESET}"
-	echo "    Compila todas las asignaturas"
-	echo
-	echo "${F_BOLD}limpiar${F_RESET} [asignatura]"
-	echo "    Limpia los archivos generados de una asignatura"
-	echo
-	echo "${F_BOLD}limpiar_todo${F_RESET}"
-	echo "    Limpia los archivos generados de todas las asignaturas"
-	echo
-	echo "${F_BOLD}empaquetar${F_RESET} [asignatura]"
-	echo "    Zipea todos los ficheros necesarios para compilar una asignatura"
-	echo
-	echo "${F_BOLD}instalar${F_RESET}"
-	echo "    Instala globalmente los paquetes"
-	echo
-	echo "${F_BOLD}ayuda${F_RESET}"
-	echo "    Muestra esta ayuda"
-	echo
+#= ayuda [@cmd]
+#= Muestra la ayuda de un comando, o de todos.
+#= La informacion se extrae del propio fichero usando codigo Perl ilegible.
+cmdlet__ayuda() {
+	if ! type perl > /dev/null; then
+		abort 'La ayuda usa perl. Abre el fichero directamente para ver los comentarios.'
+	fi
+	if [[ ${#@} -eq 0 ]]; then
+		echo "uso: $F_BOLD$exe$F_RESET <comando> [<argumentos>]"
+		echo ""
+		echo "Los subcomandos validos son:"
+		perl -lane '
+			sub bold { `tput bold`.$_[0].`tput sgr0` }
+			next unless (/^#=/); #next unless $. > 70;
+			printf "   %-33s %s", (bold $F[1]), (<> =~ s/^#=\s+//r);
+			while (<> =~ /^#=/) {};
+		' "${BASH_SOURCE[0]}"
+	else
+		perl -wlane '
+			$\="\n";
+			sub under { `tput smul`.$_[0].`tput rmul` }
+			sub bold  { `tput bold`.$_[0].`tput sgr0` }
+			sub formatize {
+				$_[0] =~ s/@([\w.-]+)/under $1/ge;
+				$_[0] =~ s/((?:^|\s|(?<=\[))-[\w.-]+)/bold $1/ge;
+				return $_[0];
+			}
+			next unless (/^#= \Q'$1'/);
+			shift @F;
+			$cmd = bold shift @F;
+			chomp($des = ($_ = <>) =~ s/^#=\s+//r);
+			print join " ", ("uso:", (bold "$cmd"), map { formatize $_ } @F);
+			print "   $des";
+			while (($_ = <>) =~ s/^#=\s+//) {
+				chomp; next if /^$/; print "   ", formatize $_;
+			}
+			$found = 1;
+			exit 0;
+			END { print "Ayuda no encontrada para '$1'." unless $found; }
+		' "${BASH_SOURCE[0]}"
+	fi
 }
 
 
 # ===================================================================
 # Seleccionador de utilidad
 
-# Parseamos los argumentos
-while getopts "qs" arg; do
-	case "$arg" in
-		s|q) SILENT=true                              	;;
-		\?) abort "Argumento no reconocido (-$OPTARG)"	;;
-		--) break                                     	;;
-	esac
-done
-shift $((OPTIND-1))
+exe="$(basename "$0")"
+cmd="cmdlet__${1//-/_}"
 
-# Ejecutamos el subcomando (ayuda por defecto)
-subcmd="${1:-ayuda}"
-shift || :
-case "$subcmd" in
-	# Comandos validos
-	crear_asignatura)	( crear_asignatura  	"$@" ) ;;
-	limpiar)         	( limpiar           	"$@" ) ;;
-	compilar)        	( compilar          	"$@" ) ;;
-	compilar_todo)   	( time compilar_todo	"$@" ) ;;
-	limpiar_todo)    	( time limpiar_todo		"$@" ) ;;
-	empaquetar)      	( empaquetar        	"$@" ) ;;
-	instalar)        	( instalar          	"$@" ) ;;
-	ayuda)           	( ayuda             	"$@" ) ;;
-	# Comando no reconocido
-	*)
-		ERR "Subcomando '$subcmd' no reconocido"
-		ERR "Prueba escribir $0 ayuda"
-		exit 1
-	;;
-esac
+# Comprobamos que exista el subcomando como funcion
+if [[ "$(type -t "$cmd")" != 'function' ]]; then
+	abort "$exe: '$1' no es un comando valido. Vease '$0 ayuda'"
+fi
 
-# Si llegamos aqui, no ha habido errores! Finalizamos
-exit 0;
+# shift devuelve 1 (error) si no hay mas parametros posicionales
+shift || true
+"$cmd" "$@"
+exit 0
